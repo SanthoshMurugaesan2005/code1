@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>MERN Demo – Simple HTML</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <style>
+    :root{--brand:#007bff;--ok:#28a745;--bad:#dc3545}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;background:#f6f7fb}
+    header{display:flex;align-items:center;justify-content:space-between;gap:.75rem;background:var(--brand);color:#fff;padding:1rem}
+    header h1{font-size:18px;margin:0}
+    .wrap{max-width:960px;margin:1rem auto;padding:0 1rem}
+    .card{background:#fff;border-radius:10px;box-shadow:0 2px 8px rgba(0,0,0,.08);padding:1rem;margin-bottom:1rem}
+    .row{display:flex;gap:.5rem;flex-wrap:wrap}
+    input,select,button{padding:.6rem;border-radius:8px;border:1px solid #ccc}
+    input,select{flex:1;min-width:200px}
+    button{cursor:pointer;border:none;background:var(--ok);color:#fff}
+    button.secondary{background:#555}
+    button.danger{background:var(--bad)}
+    .muted{color:#777}
+    .todo{display:flex;align-items:center;justify-content:space-between;border-top:1px solid #eee;padding:.6rem 0}
+    .todo:first-child{border-top:none}
+    .bad{background:#ffe8ea}
+    .good{background:#e8fff0}
+    .hidden{display:none !important}
+    @media (max-width:560px){
+      header{flex-direction:column;align-items:flex-start}
+      input,select{min-width:120px}
+    }
+  </style>
+</head>
+<body>
+<header>
+  <h1>MERN Todos – Simple HTML</h1>
+  <div id="sessionBadge" class="muted">Not signed in</div>
+</header>
+
+<div class="wrap">
+
+  <!-- Alerts -->
+  <div id="alert" class="card hidden"></div>
+
+  <!-- Auth -->
+  <div id="authCard" class="card">
+    <h3>Sign in</h3>
+    <div class="row" style="margin-bottom:.5rem">
+      <input id="loginEmail" type="email" placeholder="Email" value="user@example.com">
+      <input id="loginPass" type="password" placeholder="Password" value="password">
+      <button id="loginBtn">Login</button>
+    </div>
+    <details>
+      <summary>Create an account</summary>
+      <div class="row" style="margin-top:.5rem">
+        <input id="regEmail" type="email" placeholder="Email" value="admin@example.com">
+        <input id="regPass" type="password" placeholder="Password" value="password">
+        <select id="regRole">
+          <option value="user">user</option>
+          <option value="admin">admin</option>
+        </select>
+        <button id="registerBtn">Register</button>
+      </div>
+      <p class="muted" style="margin:.5rem 0 0">Tip: make one <b>admin</b> and one <b>user</b> to see role-based actions.</p>
+    </details>
+  </div>
+
+  <!-- User panel -->
+  <div id="userCard" class="card hidden">
+    <div class="row" style="align-items:center;justify-content:space-between">
+      <div>Welcome, <b id="userEmail"></b> (<i id="userRole"></i>)</div>
+      <div class="row" style="gap:.5rem">
+        <button id="refreshBtn" class="secondary">Refresh Todos</button>
+        <button id="logoutBtn" class="danger">Logout</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Todos -->
+  <div id="todoCard" class="card hidden">
+    <h3>Todos</h3>
+    <div class="row" style="margin-bottom:.6rem">
+      <input id="todoInput" placeholder="New todo...">
+      <button id="addBtn">Add</button>
+    </div>
+    <div id="todos"></div>
+  </div>
+
+</div>
+
+<script>
+  // ====== CONFIG ======
+  const API_BASE = 'http://localhost:4000'; // ← change to your deployed API
+
+  // ====== HELPERS ======
+  async function request(path, options = {}) {
+    const res = await fetch(API_BASE + path, {
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json', ...(options.headers || {}) },
+      ...options
+    });
+    let data = null;
+    try { data = await res.json(); } catch { data = null; }
+    if (!res.ok) throw new Error((data && data.error) || res.statusText);
+    return data;
+  }
+  const $ = (sel) => document.querySelector(sel);
+  const el = (tag, attrs = {}) => Object.assign(document.createElement(tag), attrs);
+
+  function showAlert(msg, type='bad') {
+    const box = $('#alert');
+    box.classList.remove('hidden','bad','good');
+    box.classList.add(type === 'ok' ? 'good' : 'bad');
+    box.innerHTML = `<b>${type === 'ok' ? 'Success:' : 'Error:'}</b> ${msg}`;
+    setTimeout(() => box.classList.add('hidden'), 3000);
+  }
+
+  function setSessionBadge(user) {
+    $('#sessionBadge').textContent = user ? `${user.email} (${user.role})` : 'Not signed in';
+  }
+
+  function setAuthVisible(isAuthed) {
+    $('#authCard').classList.toggle('hidden', isAuthed);
+    $('#userCard').classList.toggle('hidden', !isAuthed);
+    $('#todoCard').classList.toggle('hidden', !isAuthed);
+  }
+
+  // ====== STATE ======
+  let currentUser = null;
+  let todos = [];
+
+  // ====== RENDER ======
+  function renderUser() {
+    if (!currentUser) return;
+    $('#userEmail').textContent = currentUser.email;
+    $('#userRole').textContent = currentUser.role;
+    setSessionBadge(currentUser);
+  }
+
+  function renderTodos() {
+    const list = $('#todos');
+    list.innerHTML = '';
+    if (!todos.length) {
+      list.innerHTML = `<p class="muted">No todos yet.</p>`;
+      return;
+    }
+    todos.forEach(t => {
+      const row = el('div', { className: 'todo' });
+      const left = el('div');
+      const cb = el('input', { type: 'checkbox', checked: !!t.done });
+      cb.addEventListener('change', () => toggleTodo(t._id));
+      const text = el('span', { style: `margin-left:8px;${t.done ? 'text-decoration:line-through;color:#777' : ''}` , textContent: t.text });
+      left.append(cb, text);
+
+      const right = el('div');
+      if (currentUser.role === 'admin') {
+        const del = el('button', { className: 'danger', textContent: 'Delete' });
+        del.addEventListener('click', () => deleteTodo(t._id));
+        right.appendChild(del);
+      }
+      row.append(left, right);
+      list.appendChild(row);
+    });
+  }
+
+  // ====== API ACTIONS ======
+  async function fetchMe() {
+    try {
+      const me = await request('/api/auth/me');
+      currentUser = me?.id ? me : null;
+      setAuthVisible(!!currentUser);
+      if (currentUser) { renderUser(); await fetchTodos(); }
+      else { setSessionBadge(null); }
+    } catch {
+      currentUser = null;
+      setAuthVisible(false);
+      setSessionBadge(null);
+    }
+  }
+
+  async function login(email, password) {
+    await request('/api/auth/login', { method: 'POST', body: JSON.stringify({ email, password }) });
+    showAlert('Logged in', 'ok');
+    await fetchMe();
+  }
+
+  async function register(email, password, role) {
+    await request('/api/auth/register', { method: 'POST', body: JSON.stringify({ email, password, role }) });
+    showAlert('Account created & signed in', 'ok');
+    await fetchMe();
+  }
+
+  async function logout() {
+    await request('/api/auth/logout', { method: 'POST' });
+    currentUser = null; todos = [];
+    setAuthVisible(false);
+    setSessionBadge(null);
+    $('#todos').innerHTML = '';
+    showAlert('Logged out', 'ok');
+  }
+
+  async function fetchTodos() {
+    try {
+      todos = await request('/api/todos');
+      renderTodos();
+    } catch (e) {
+      showAlert(e.message);
+    }
+  }
+
+  async function addTodo(text) {
+    if (!text.trim()) return;
+    await request('/api/todos', { method: 'POST', body: JSON.stringify({ text }) });
+    $('#todoInput').value = '';
+    await fetchTodos();
+  }
+
+  async function toggleTodo(id) {
+    await request(`/api/todos/${id}/toggle`, { method: 'PATCH' });
+    await fetchTodos();
+  }
+
+  async function deleteTodo(id) {
+    try {
+      await request(`/api/todos/${id}`, { method: 'DELETE' });
+      await fetchTodos();
+    } catch (e) {
+      showAlert(e.message);
+    }
+  }
+
+  // ====== EVENTS ======
+  $('#loginBtn').addEventListener('click', () => {
+    const email = $('#loginEmail').value.trim();
+    const pass = $('#loginPass').value;
+    login(email, pass).catch(e => showAlert(e.message));
+  });
+
+  $('#registerBtn').addEventListener('click', () => {
+    const email = $('#regEmail').value.trim();
+    const pass = $('#regPass').value;
+    const role = $('#regRole').value;
+    register(email, pass, role).catch(e => showAlert(e.message));
+  });
+
+  $('#logoutBtn').addEventListener('click', () => logout().catch(e => showAlert(e.message)));
+
+  $('#addBtn').addEventListener('click', () => {
+    const txt = $('#todoInput').value;
+    addTodo(txt).catch(e => showAlert(e.message));
+  });
+
+  $('#refreshBtn').addEventListener('click', () => fetchTodos().catch(e => showAlert(e.message)));
+
+  // Enter key to add todo
+  $('#todoInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') $('#addBtn').click();
+  });
+
+  // ====== INIT ======
+  fetchMe(); // checks session and loads todos if signed in
+</script>
+</body>
+</html>
